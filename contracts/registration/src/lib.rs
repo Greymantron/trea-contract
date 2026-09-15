@@ -71,6 +71,14 @@ impl EventRegistration {
             .set(&DataKey::Event(event_id), &event);
     }
 
+    pub fn update_event_terms(
+        env: Env,
+        organizer: Address,
+        event_id: u32,
+        price: i128,
+        self_refund_allowed: bool,
+        refund_deadline: u64,
+    ) {
     pub fn update_capacity(env: Env, organizer: Address, event_id: u32, new_capacity: u32) {
         organizer.require_auth();
         let mut event: Event = env
@@ -79,6 +87,12 @@ impl EventRegistration {
             .get(&DataKey::Event(event_id))
             .unwrap();
         assert!(caller_is_organizer(&event, &organizer), "not the organizer");
+        assert!(event.registered == 0, "event already has registrations");
+
+        event.price = price;
+        event.self_refund_allowed = self_refund_allowed;
+        event.refund_deadline = refund_deadline;
+
         assert!(
             new_capacity >= event.registered,
             "capacity cannot be below current registrations"
