@@ -78,6 +78,8 @@ impl EventRegistration {
             .storage()
             .persistent()
             .get(&DataKey::Event(event_id))
+            .unwrap();
+        assert!(event.registered < event.capacity, "event full");
             .ok_or(ContractError::EventNotFound)?;
         if event.registered >= event.capacity {
             return Err(ContractError::EventFull);
@@ -112,6 +114,7 @@ impl EventRegistration {
             .storage()
             .persistent()
             .get(&DataKey::Event(event_id))
+            .unwrap();
             .ok_or(ContractError::EventNotFound)?;
         let paid: i128 = env
             .storage()
@@ -148,6 +151,30 @@ impl EventRegistration {
         env.storage()
             .persistent()
             .remove(&DataKey::Registered(event_id, attendee));
+    }
+
+    pub fn transfer_registration(env: Env, from: Address, event_id: u32, to: Address) {
+        from.require_auth();
+
+        let paid: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Registered(event_id, from.clone()))
+            .expect("not registered");
+
+        assert!(
+            !env.storage()
+                .persistent()
+                .has(&DataKey::Registered(event_id, to.clone())),
+            "already registered"
+        );
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Registered(event_id, from));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Registered(event_id, to), &paid);
         Ok(())
     }
 
