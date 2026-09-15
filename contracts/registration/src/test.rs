@@ -1,12 +1,15 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, Ledger};
+use soroban_sdk::testutils::{Address as _, Events, Ledger};
 use soroban_sdk::token::{StellarAssetClient, TokenClient};
 
 // Helper: spins up a test token contract and returns clients for
 // normal token operations (transfer/balance) and admin operations (mint).
-fn create_token_contract<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, StellarAssetClient<'a>) {
+fn create_token_contract<'a>(
+    env: &Env,
+    admin: &Address,
+) -> (TokenClient<'a>, StellarAssetClient<'a>) {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let address = sac.address();
     (
@@ -105,7 +108,15 @@ fn test_self_refund_before_deadline_succeeds() {
 
     token_admin_client.mint(&attendee, &1000);
 
-    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &9_999_999_999);
+    client.create_event(
+        &organizer,
+        &1,
+        &200,
+        &token.address,
+        &100,
+        &true,
+        &9_999_999_999,
+    );
     client.register(&attendee, &1);
     assert_eq!(token.balance(&attendee), 800);
 
@@ -181,4 +192,88 @@ fn test_stranger_cannot_refund() {
     client.register(&attendee, &1);
 
     client.refund(&stranger, &1, &attendee); // should panic
+}
+
+#[test]
+fn test_events_emitted() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    client.create_event(
+        &organizer,
+        &1,
+        &200,
+        &token.address,
+        &100,
+        &true,
+        &9_999_999_999,
+    );
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
+
+    client.register(&attendee, &1);
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
+
+    client.check_in(&organizer, &1, &attendee);
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
+
+    client.refund(&attendee, &1, &attendee);
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
+
+    client.register(&attendee, &1);
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
+
+    client.payout(&organizer, &1);
+    assert_eq!(
+        env.events()
+            .all()
+            .filter_by_contract(&contract_id)
+            .events()
+            .len(),
+        1
+    );
 }
