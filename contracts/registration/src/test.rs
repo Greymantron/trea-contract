@@ -132,59 +132,9 @@ fn test_self_refund_before_deadline_succeeds() {
 }
 
 #[test]
-#[should_panic(expected = "refund deadline passed")]
-fn test_self_refund_after_deadline_fails() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(EventRegistration, ());
-    let client = EventRegistrationClient::new(&env, &contract_id);
-
-    let organizer = Address::generate(&env);
-    let attendee = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
-
-    token_admin_client.mint(&attendee, &1000);
-
-    let prices = create_token_prices(&env, &token.address, 200);
-
-    client.create_event(&organizer, &1, &prices, &100, &true, &100);
-    client.register(&attendee, &1, &token.address);
-
-    env.ledger().with_mut(|li| li.timestamp = 200);
-
-    client.refund(&attendee, &1, &attendee); // should panic
-}
-
-#[test]
-fn test_organizer_refund_bypasses_deadline() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let contract_id = env.register(EventRegistration, ());
-    let client = EventRegistrationClient::new(&env, &contract_id);
-
-    let organizer = Address::generate(&env);
-    let attendee = Address::generate(&env);
-    let token_admin = Address::generate(&env);
-    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
-
-    token_admin_client.mint(&attendee, &1000);
-
-    let prices = create_token_prices(&env, &token.address, 200);
-
-    client.create_event(&organizer, &1, &prices, &100, &false, &100);
-    client.register(&attendee, &1, &token.address);
-    env.ledger().with_mut(|li| li.timestamp = 500);
-
-    client.refund(&organizer, &1, &attendee);
-    assert_eq!(token.balance(&attendee), 1000);
-}
-
-#[test]
 #[should_panic(expected = "only attendee or organizer can refund")]
 fn test_stranger_cannot_refund() {
+fn test_self_refund_after_deadline_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -198,6 +148,110 @@ fn test_stranger_cannot_refund() {
     let (token, token_admin_client) = create_token_contract(&env, &token_admin);
 
     token_admin_client.mint(&attendee, &1000);
+
+    let prices = create_token_prices(&env, &token.address, 200);
+
+    client.create_event(&organizer, &1, &prices, &100, &true, &100);
+    client.register(&attendee, &1, &token.address);
+
+    client.refund(&stranger, &1, &attendee);
+}
+
+#[test]
+fn test_transfer_registration_success() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &0);
+    client.register(&attendee, &1);
+
+    client.transfer_registration(&attendee, &1, &receiver);
+
+    // receiver should be able to refund their newly transferred ticket
+    client.refund(&receiver, &1, &receiver);
+
+    // contract pays receiver
+    assert_eq!(token.balance(&receiver), 200);
+    let err = client
+        .try_refund(&attendee, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::DeadlinePassed);
+}
+
+#[test]
+#[should_panic(expected = "not registered")]
+fn test_transfer_registration_not_registered() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let from = Address::generate(&env);
+    let to = Address::generate(&env);
+
+    client.transfer_registration(&from, &1, &to);
+}
+
+#[test]
+#[should_panic(expected = "not registered")]
+fn test_transfer_registration_from_no_longer_registered() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    let prices = create_token_prices(&env, &token.address, 200);
+
+    client.create_event(&organizer, &1, &prices, &100, &false, &100);
+    client.register(&attendee, &1, &token.address);
+    env.ledger().with_mut(|li| li.timestamp = 500);
+
+    client.transfer_registration(&attendee, &1, &receiver);
+
+    // attendee should no longer be registered, so refund should fail
+    client.refund(&attendee, &1, &attendee);
+}
+
+#[test]
+#[should_panic(expected = "already registered")]
+fn test_transfer_registration_already_registered() {
+fn test_stranger_cannot_refund() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let receiver = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+    token_admin_client.mint(&receiver, &1000);
 
     let prices = create_token_prices(&env, &token.address, 200);
 
@@ -246,6 +300,22 @@ fn test_multiple_tokens() {
 #[test]
 #[should_panic(expected = "unsupported token")]
 fn test_unsupported_token_fails() {
+    let attendee = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &100);
+    client.register(&attendee, &1);
+
+    env.ledger().with_mut(|li| li.timestamp = 200);
+
+    client.refund(&attendee, &1, &attendee); // should panic
+}
+
+#[test]
+fn test_organizer_refund_bypasses_deadline() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -264,4 +334,19 @@ fn test_unsupported_token_fails() {
 
     // Attempting to register with token_b, which is not in prices Map
     client.register(&attendee, &1, &token_b.address);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    client.create_event(&organizer, &1, &200, &token.address, &100, &false, &100);
+    client.register(&attendee, &1);
+    env.ledger().with_mut(|li| li.timestamp = 500);
+
+    client.refund(&organizer, &1, &attendee);
+    assert_eq!(token.balance(&attendee), 1000);
+    let err = client
+        .try_refund(&stranger, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::OnlyAttendeeOrOrganizer);
 }

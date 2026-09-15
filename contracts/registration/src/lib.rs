@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Map};
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::needless_borrows_for_generic_args)]
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env};
 
 #[contracttype]
 #[derive(Clone)]
@@ -10,6 +12,19 @@ pub struct Event {
     pub registered: u32,
     pub self_refund_allowed: bool,
     pub refund_deadline: u64,
+}
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum ContractError {
+    EventNotFound = 1,
+    EventFull = 2,
+    NotRegistered = 3,
+    RefundNotAllowed = 4,
+    DeadlinePassed = 5,
+    NotOrganizer = 6,
+    OnlyAttendeeOrOrganizer = 7,
 }
 
 #[contracttype]
@@ -43,7 +58,8 @@ impl EventRegistration {
         organizer.require_auth();
         let event = Event {
             organizer,
-            token_prices,
+            price,
+            token,
             capacity,
             registered: 0,
             self_refund_allowed,
@@ -61,7 +77,7 @@ impl EventRegistration {
             .set(&DataKey::CheckedIn(event_id, attendee), &true);
     }
 
-    pub fn register(env: Env, attendee: Address, event_id: u32, payment_token: Address) {
+    pub fn register(env: Env, attendee: Address, event_id: u32) -> Result<(), ContractError> {
         attendee.require_auth();
         let mut event: Event = env
             .storage()
@@ -69,6 +85,10 @@ impl EventRegistration {
             .get(&DataKey::Event(event_id))
             .unwrap();
         assert!(event.registered < event.capacity, "event full");
+            .ok_or(ContractError::EventNotFound)?;
+        if event.registered >= event.capacity {
+            return Err(ContractError::EventFull);
+        }
 
         let price = event
             .token_prices
@@ -97,7 +117,12 @@ impl EventRegistration {
             .set(&DataKey::Registered(event_id, attendee), &payment);
     }
 
-    pub fn refund(env: Env, caller: Address, event_id: u32, attendee: Address) {
+    pub fn refund(
+        env: Env,
+        caller: Address,
+        event_id: u32,
+        attendee: Address,
+    ) -> Result<(), ContractError> {
         caller.require_auth();
 
         let mut event: Event = env
@@ -106,27 +131,27 @@ impl EventRegistration {
             .get(&DataKey::Event(event_id))
             .unwrap();
         let payment: Payment = env
+            .ok_or(ContractError::EventNotFound)?;
+        let paid: i128 = env
             .storage()
             .persistent()
             .get(&DataKey::Registered(event_id, attendee.clone()))
-            .expect("not registered");
+            .ok_or(ContractError::NotRegistered)?;
 
         let is_organizer = caller == event.organizer;
         let is_self = caller == attendee;
 
         if is_self {
-            assert!(
-                event.self_refund_allowed,
-                "self-refund not allowed for this event"
-            );
-            if event.refund_deadline > 0 {
-                assert!(
-                    env.ledger().timestamp() < event.refund_deadline,
-                    "refund deadline passed"
-                );
+            if !event.self_refund_allowed {
+                return Err(ContractError::RefundNotAllowed);
+            }
+            if event.refund_deadline > 0 && env.ledger().timestamp() >= event.refund_deadline {
+                return Err(ContractError::DeadlinePassed);
             }
         } else {
-            assert!(is_organizer, "only attendee or organizer can refund");
+            if !is_organizer {
+                return Err(ContractError::OnlyAttendeeOrOrganizer);
+            }
         }
 
         if payment.amount > 0 {
@@ -145,14 +170,41 @@ impl EventRegistration {
             .remove(&DataKey::Registered(event_id, attendee));
     }
 
-    pub fn payout(env: Env, organizer: Address, event_id: u32) {
+    pub fn transfer_registration(env: Env, from: Address, event_id: u32, to: Address) {
+        from.require_auth();
+
+        let paid: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Registered(event_id, from.clone()))
+            .expect("not registered");
+
+        assert!(
+            !env.storage()
+                .persistent()
+                .has(&DataKey::Registered(event_id, to.clone())),
+            "already registered"
+        );
+
+        env.storage()
+            .persistent()
+            .remove(&DataKey::Registered(event_id, from));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Registered(event_id, to), &paid);
+        Ok(())
+    }
+
+    pub fn payout(env: Env, organizer: Address, event_id: u32) -> Result<(), ContractError> {
         organizer.require_auth();
         let event: Event = env
             .storage()
             .persistent()
             .get(&DataKey::Event(event_id))
-            .unwrap();
-        assert!(caller_is_organizer(&event, &organizer), "not the organizer");
+            .ok_or(ContractError::EventNotFound)?;
+        if !caller_is_organizer(&event, &organizer) {
+            return Err(ContractError::NotOrganizer);
+        }
 
         for token in event.token_prices.keys() {
             let client = token::Client::new(&env, &token);
@@ -162,6 +214,7 @@ impl EventRegistration {
                 client.transfer(&contract_address, &organizer, &balance);
             }
         }
+        Ok(())
     }
 }
 
