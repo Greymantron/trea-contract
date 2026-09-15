@@ -6,7 +6,10 @@ use soroban_sdk::token::{StellarAssetClient, TokenClient};
 
 // Helper: spins up a test token contract and returns clients for
 // normal token operations (transfer/balance) and admin operations (mint).
-fn create_token_contract<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, StellarAssetClient<'a>) {
+fn create_token_contract<'a>(
+    env: &Env,
+    admin: &Address,
+) -> (TokenClient<'a>, StellarAssetClient<'a>) {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let address = sac.address();
     (
@@ -105,7 +108,15 @@ fn test_self_refund_before_deadline_succeeds() {
 
     token_admin_client.mint(&attendee, &1000);
 
-    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &9_999_999_999);
+    client.create_event(
+        &organizer,
+        &1,
+        &200,
+        &token.address,
+        &100,
+        &true,
+        &9_999_999_999,
+    );
     client.register(&attendee, &1);
     assert_eq!(token.balance(&attendee), 800);
 
@@ -181,4 +192,53 @@ fn test_stranger_cannot_refund() {
     client.register(&attendee, &1);
 
     client.refund(&stranger, &1, &attendee); // should panic
+}
+
+#[test]
+fn test_update_capacity_increases_and_decreases() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    // Initial capacity is 100
+    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &0);
+    client.register(&attendee, &1);
+
+    // valid increase
+    client.update_capacity(&organizer, &1, &200);
+
+    // valid decrease
+    client.update_capacity(&organizer, &1, &50);
+}
+
+#[test]
+#[should_panic(expected = "capacity cannot be below current registrations")]
+fn test_update_capacity_fails_below_registered() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let contract_id = env.register(EventRegistration, ());
+    let client = EventRegistrationClient::new(&env, &contract_id);
+
+    let organizer = Address::generate(&env);
+    let attendee = Address::generate(&env);
+    let token_admin = Address::generate(&env);
+    let (token, token_admin_client) = create_token_contract(&env, &token_admin);
+
+    token_admin_client.mint(&attendee, &1000);
+
+    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &0);
+    client.register(&attendee, &1);
+
+    // currently 1 registered. trying to set capacity to 0 should panic.
+    client.update_capacity(&organizer, &1, &0);
 }
