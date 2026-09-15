@@ -46,6 +46,7 @@ pub struct EventRegistration;
 
 #[contractimpl]
 impl EventRegistration {
+    #[allow(clippy::too_many_arguments)]
     pub fn create_event(
         env: Env,
         organizer: Address,
@@ -65,6 +66,25 @@ impl EventRegistration {
             self_refund_allowed,
             refund_deadline,
         };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Event(event_id), &event);
+    }
+
+    pub fn update_capacity(env: Env, organizer: Address, event_id: u32, new_capacity: u32) {
+        organizer.require_auth();
+        let mut event: Event = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Event(event_id))
+            .unwrap();
+        assert!(caller_is_organizer(&event, &organizer), "not the organizer");
+        assert!(
+            new_capacity >= event.registered,
+            "capacity cannot be below current registrations"
+        );
+
+        event.capacity = new_capacity;
         env.storage()
             .persistent()
             .set(&DataKey::Event(event_id), &event);

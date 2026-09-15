@@ -262,6 +262,7 @@ fn test_stranger_cannot_refund() {
 }
 
 #[test]
+fn test_update_capacity_increases_and_decreases() {
 fn test_multiple_tokens() {
     let env = Env::default();
     env.mock_all_auths();
@@ -306,6 +307,20 @@ fn test_unsupported_token_fails() {
 
     token_admin_client.mint(&attendee, &1000);
 
+    // Initial capacity is 100
+    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &0);
+    client.register(&attendee, &1);
+
+    // valid increase
+    client.update_capacity(&organizer, &1, &200);
+
+    // valid decrease
+    client.update_capacity(&organizer, &1, &50);
+}
+
+#[test]
+#[should_panic(expected = "capacity cannot be below current registrations")]
+fn test_update_capacity_fails_below_registered() {
     client.create_event(&organizer, &1, &200, &token.address, &100, &true, &100);
     client.register(&attendee, &1);
 
