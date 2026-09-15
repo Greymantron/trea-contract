@@ -127,6 +127,7 @@ fn test_self_refund_before_deadline_succeeds() {
 #[test]
 #[should_panic(expected = "only attendee or organizer can refund")]
 fn test_stranger_cannot_refund() {
+fn test_self_refund_after_deadline_fails() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -182,6 +183,11 @@ fn test_transfer_registration_success() {
 
     // contract pays receiver
     assert_eq!(token.balance(&receiver), 200);
+    let err = client
+        .try_refund(&attendee, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::DeadlinePassed);
 }
 
 #[test]
@@ -228,6 +234,7 @@ fn test_transfer_registration_from_no_longer_registered() {
 #[test]
 #[should_panic(expected = "already registered")]
 fn test_transfer_registration_already_registered() {
+fn test_stranger_cannot_refund() {
     let env = Env::default();
     env.mock_all_auths();
 
@@ -296,4 +303,9 @@ fn test_organizer_refund_bypasses_deadline() {
 
     client.refund(&organizer, &1, &attendee);
     assert_eq!(token.balance(&attendee), 1000);
+    let err = client
+        .try_refund(&stranger, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::OnlyAttendeeOrOrganizer);
 }
