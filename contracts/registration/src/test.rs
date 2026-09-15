@@ -6,7 +6,10 @@ use soroban_sdk::token::{StellarAssetClient, TokenClient};
 
 // Helper: spins up a test token contract and returns clients for
 // normal token operations (transfer/balance) and admin operations (mint).
-fn create_token_contract<'a>(env: &Env, admin: &Address) -> (TokenClient<'a>, StellarAssetClient<'a>) {
+fn create_token_contract<'a>(
+    env: &Env,
+    admin: &Address,
+) -> (TokenClient<'a>, StellarAssetClient<'a>) {
     let sac = env.register_stellar_asset_contract_v2(admin.clone());
     let address = sac.address();
     (
@@ -105,7 +108,15 @@ fn test_self_refund_before_deadline_succeeds() {
 
     token_admin_client.mint(&attendee, &1000);
 
-    client.create_event(&organizer, &1, &200, &token.address, &100, &true, &9_999_999_999);
+    client.create_event(
+        &organizer,
+        &1,
+        &200,
+        &token.address,
+        &100,
+        &true,
+        &9_999_999_999,
+    );
     client.register(&attendee, &1);
     assert_eq!(token.balance(&attendee), 800);
 
@@ -114,7 +125,6 @@ fn test_self_refund_before_deadline_succeeds() {
 }
 
 #[test]
-#[should_panic(expected = "refund deadline passed")]
 fn test_self_refund_after_deadline_fails() {
     let env = Env::default();
     env.mock_all_auths();
@@ -134,7 +144,11 @@ fn test_self_refund_after_deadline_fails() {
 
     env.ledger().with_mut(|li| li.timestamp = 200);
 
-    client.refund(&attendee, &1, &attendee); // should panic
+    let err = client
+        .try_refund(&attendee, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::DeadlinePassed);
 }
 
 #[test]
@@ -161,7 +175,6 @@ fn test_organizer_refund_bypasses_deadline() {
 }
 
 #[test]
-#[should_panic(expected = "only attendee or organizer can refund")]
 fn test_stranger_cannot_refund() {
     let env = Env::default();
     env.mock_all_auths();
@@ -180,5 +193,9 @@ fn test_stranger_cannot_refund() {
     client.create_event(&organizer, &1, &200, &token.address, &100, &true, &0);
     client.register(&attendee, &1);
 
-    client.refund(&stranger, &1, &attendee); // should panic
+    let err = client
+        .try_refund(&stranger, &1, &attendee)
+        .unwrap_err()
+        .unwrap();
+    assert_eq!(err, ContractError::OnlyAttendeeOrOrganizer);
 }
